@@ -1,0 +1,526 @@
+---
+title: "Prediciting Flight Delays"
+author: "Divya Virmani, Nebadita Nayak, Navneeth Baliga, Shyam Mohan"
+date: "December 15th, 2017"
+output:
+  html_document:
+    toc: true
+    toc_depth: 4
+    theme: cerulean
+    highlight: tango
+---
+---
+title : "Introduction"
+output: html_document
+
+The goal of this project is to understand the On-Time Performance dataset and create a simple departure delay warning system. The dataset contains collective data of all flights arriving to or departing from the Pittsburgh Airport. We are currently using the dataset containing the flight on time performance from the year 2006. By exploring this data we want to build a classification system that can classify whether the flight will suffer a delay in departure or will depart on time. 
+---
+
+```{r warning=FALSE}
+#Required Libraries
+
+
+library(leaps)          # variable selection
+library(ggplot2)        # graphics library
+library(ISLR)           # contains code and data from the textbook
+library(knitr)          # contains knitting control
+library(tree)           # For the tree-fitting 'tree' function
+library(MASS)           # For Boston data
+library(randomForest)   # For random forests and bagging
+library(gbm)            # For boosting
+library(glmnet)
+library(caret)
+library(tree)
+library(boot)
+library("pROC")         # For RoC Curve
+
+
+
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+options(scipen = 4)  # Suppresses scientific notation
+
+#Reading the flight data.
+flight <- read.csv("http://www.andrew.cmu.edu/user/achoulde/95791/projects/Project%20D/all_PIT_2006.csv")
+#flight2016<- read.csv("/Users/nav/Desktop/all_PIT_2016.csv")
+id <- "1hEo-zXqgrC7HBwre73q3rHgeViKGvcjQ"
+flight2016 <- read.csv(sprintf("https://docs.google.com/uc?id=%s&export=download", id))
+flight2016[is.na(flight2016)] <- 0
+
+#Keeping a copy of the flight data for sampling purposes.
+rflight <- flight
+rflight2016 <- flight2016
+
+
+#Re formatting the data
+#Ref : https://stackoverflow.com/questions/26334763/merge-three-different-columns-into-a-date-in-r
+flight$FlightDate = as.Date(with(flight, paste(flight$Year,flight$Month, flight$DayofMonth, sep ="-")),"%Y-%m-%d")
+flight2016$FlightDate = as.Date(with(flight2016, paste(flight2016$Year,flight2016$Month, flight2016$DayofMonth, sep ="-")),"%Y-%m-%d")
+
+```
+
+## Cancelled and Diverted flight records are removed since they do not contribute towards the project goal.
+
+```{r}
+
+#Remve the records from the data where the flight is Cancelled as those columns do not have response varibale value of flight delay.This step handles the null variable case.
+
+#Remove null records from 2016 data
+#flight2016 = na.omit(flight2016)
+
+#Remove details of cancelled and diverted flights.
+flight = subset(flight, (flight$Cancelled==0 & flight$Diverted==0))
+flight2016 = subset(flight2016, (flight2016$Cancelled==0 & flight2016$Diverted==0))
+
+
+#Let's see the null values in the next data set
+colnames(flight)[colSums(is.na(flight)) > 0]
+colnames(flight2016)[colSums(is.na(flight2016)) > 0]
+
+#Percent of data still available after removing null records
+nrow(flight)/nrow(rflight)
+nrow(flight2016)/nrow(rflight2016)
+
+```
+
+---
+title : "Data Exploration"
+outpt : html_document
+
+We did data exploration using the following steps -
+
+A. Variable Identification - 
+
+      According to the problem set, we identified our response varriable and predictor variables. 
+        - Response Variable is DepDel15.
+        - Predictor variables are Carrier, FlightDate, Quarter, Month, DayofMonth, DayOfWeek, Distance, DistanceGroup, 
+          CRSEElapsedTime, ArrTimeBlk, DepTimeBlk, Dest, TailNum.
+          
+          
+B.  Univariate Analysis - 
+
+    We're trying to figure how each variable is varying with our response variable. We have plotted ggplot of each predictor w.r.t response     variable.
+---
+
+## Plot 1: Plot shows how Delay in Departure is varying with Carrier.
+
+```{r}
+count1 <- table(flight$DepDel15, flight$Carrier)
+barplot(count1, main="Flight Delays count for Carriers",
+  xlab="Carrier", col=c("darkblue","red"),
+ 	legend = rownames(count1))
+```
+
+## From the data visualization above, we found that flight delays are varying with different carriers. Especially cariers like US experience a lot of delays as well as they exhibhit a high volume.
+
+## Plot 2: Plot shows how Depdelay is varying in different Quarters. 
+
+```{r}
+count2 <- table(flight$DepDel15, flight$Quarter)
+barplot(count2, main="Flight Delays count for Quarters",
+  xlab="Quarter", col=c("darkblue","red"),
+ 	legend = rownames(count2))
+```
+
+## From the data visualization above, we found that flight delays are varying with different quaters. For example, Quater 3 has maximum delays.
+
+## Plot 3: Plot shows how Depdelay is varying in different month. 
+
+```{r}
+count3 <- table(flight$DepDel15, flight$Month)
+barplot(count3, main="Flight Delays count Month wise",
+  xlab="Month", col=c("darkblue","red"),
+ 	legend = rownames(count3))
+```
+
+## From the data visualization above, we found that flight delays are varying month wise. For example, month 7 has the maximum number of flight delays..
+
+## Plot 4: Plot shows how Depdelay is varying on different day of the week. 
+
+```{r}
+count4 <- table(flight$DepDel15, flight$DayOfWeek)
+barplot(count4, main="Flight Delays count - Day of week",
+  xlab="DayOfWeek", col=c("darkblue","red"),
+ 	legend = rownames(count4))
+```
+
+## From the data visualization above, we found that flight delays is different on different day of the week. For example, there are lot on delays durng mid week and during the weekend.
+
+## Plot 5: Plot shows how Depdelay is varying in different month. 
+
+```{r}
+count5 <- table(flight$DepDel15, flight$TailNum)
+barplot(count5, main="Flight Delays count - TailNum",
+  xlab="TailNum", col=c("darkblue","red"),
+ 	legend = rownames(count5))
+```
+
+## From the data visualization above, we found that flight delays varying with tail number.
+
+## Plot 6: Plot shows how Depdelay is varying with day of month. 
+
+```{r}
+count6 <- table(flight$DepDel15, flight$DayofMonth)
+barplot(count6, main="Flight Delays count - Day of Month",
+  xlab="Day of Month", col=c("darkblue","red"),
+ 	legend = rownames(count6))
+```
+
+## From the data visualization above, we found that flight delays varies with different day of month. But it looks like there is not much variations.
+
+## Plot 7: Plot shows how Depdelay is varying with flight date. 
+
+```{r}
+count7 <- table(flight$DepDel15, flight$FlightDate)
+barplot(count7, main="Flight Delays count - Flight Date",
+  xlab="Flight Date", col=c("darkblue","red"),
+ 	legend = rownames(count7))
+```
+
+## From the data visualization above, we found that flight delays are varying with flight date. There are huge variations in flight delays based on different dates.
+
+## Plot 8: Plot shows how Depdelay is varying with distance. 
+
+```{r}
+count8 <- table(flight$DepDel15, flight$Distance)
+barplot(count8, main="Flight Delays count - Distance",
+  xlab="Distance", col=c("darkblue","red"),
+ 	legend = rownames(count8))
+```
+
+## From the data visualization above, we found that flight delays are varying with distance. Different distances have different delays, since there are less long distance flights, there are lesser delays whereas there are more short distance flights, hence there are more delays.
+
+## Plot 9: Plot shows how Depdelay is varying with CRS elapsed time. 
+
+```{r}
+count9 <- table(flight$DepDel15, flight$CRSElapsedTime)
+barplot(count9, main="Flight Delays count - CRSElapsed time",
+  xlab="CRSElapsedTime", col=c("darkblue","red"),
+ 	legend = rownames(count9))
+```
+
+## From the data visualization above, we found that flight delays varying with different CRS Elapsed time. Smaller CRS elasped time has more delays compared to larger CRS elapsed time.
+
+## Plot 10: Plot shows how Depdelay is varying with distance group. 
+
+```{r}
+count10 <- table(flight$DepDel15, flight$DistanceGroup)
+barplot(count10, main="Flight Delays count - Distance group",
+  xlab="Distance group", col=c("darkblue","red"),
+ 	legend = rownames(count10))
+```
+
+## From the data visualization above, we found that flight delays are varying with different distance group For example, Distance group 2 has more number of delays.
+
+## Plot 11: Plot shows how Depdelay is varying with Arrival time in bulk. 
+
+```{r}
+count11 <- table(flight$DepDel15, flight$ArrTimeBlk)
+barplot(count11, main="Flight Delays count - Arrival time block",
+  xlab="Arrival time block", col=c("darkblue","red"),
+ 	legend = rownames(count11))
+```
+
+## From the data visualization above, we found that flight delays are varying with different arrival time blocks.
+
+## Plot 12: Plot shows how Depdelay is varying with Departure time in bulk. 
+
+```{r}
+count12 <- table(flight$DepDel15, flight$DepTimeBlk)
+barplot(count12, main="Flight Delays count - Departure time Block",
+  xlab="Departure Time Block", col=c("darkblue","red"),
+ 	legend = rownames(count12))
+```
+
+## From the data visualization above, we found that flight delays are varying with different destination time blocks. 
+
+## Plot 13: Plot shows how Depdelay is varying with Destination.
+
+```{r}
+count13 <- table(flight$DepDel15, flight$Dest)
+barplot(count13, main="Flight Delays count Destination wise",
+  xlab="Destination", col=c("darkblue","red"),
+ 	legend = rownames(count13))
+```
+
+## From the data visualization above, we found that flight delays are varying with different destination.
+
+
+---
+title : "Data Exploration Key Findings"
+output: html_document
+
+ * Cariers like US and XE experienced the highest delays and they also show high volume of flights. A flight prediction warning system can    be highly beneficial.
+
+  * The last two quarters of 2006 experienced comparitively higher delays as compared to the first two quarters. But they also had a huge      flight volume owing to the holiday season. 
+  
+  * The begining of the week had consistent delay patterns as compared towards the week end. Building a reliable warning system might          benefit the commuters who might business professionals commuting for work.
+  
+  *  Flights identified by N814UA, N513, N14704 are notorious for high amount of delays in 2006.
+  
+  *  Distance, Month, Quarter and Tail Numbers have been consistently demonstrating delay patterns. Based on intuition we can now come up       with a set of variables to classify whether a flight will delay or will be on-time.
+---
+
+```{r warning=FALSE}
+
+
+
+#Now, we would take variables that are not redundant, like Year, month, day of the month, day of week, depblck, arrival block are of no importance. SOw e would drop these variables
+
+
+selectedCols = c("FlightDate", "Carrier",  "DayOfWeek", "Distance","ArrDelay",
+                 "DistanceGroup", "CRSElapsedTime", "ArrTimeBlk", "DepTimeBlk", "Dest", "DepDel15")
+
+flight = flight[selectedCols]
+flight2016 = flight2016[selectedCols]
+
+flight$DepDel15 = as.factor(flight$DepDel15) 
+
+#Make sure that the new 2016 categorical predictors have same levels of factors.
+flight2016$Carrier <- factor(flight2016$Carrier, levels = levels(flight$Carrier))
+
+
+flight2016$Dest <- factor(flight2016$Dest, levels = levels(flight$Dest))
+
+flight2016$Distance = as.numeric(flight2016$Distance)
+flight$DayOfWeek = as.factor(flight$DayOfWeek)
+flight$DistanceGroup = as.factor(flight$DayOfWeek)
+flight2016$CRSElapsedTime = as.numeric(flight2016$CRSElapsedTime)
+flight2016$ArrDelay = as.numeric(flight2016$ArrDelay)
+flight$ArrDelay = as.numeric(flight$ArrDelay)
+
+#Make sure that the new 2017 categorical predictors have same levels of factors.
+#Make sure that the new 2017 categorical predictors have same levels of factors.
+
+flight2016$Carrier <- factor(flight2016$Carrier, levels = levels(flight$Carrier))
+flight2016$Dest <- factor(flight2016$Dest, levels = levels(flight$Dest))
+flight2016$DistanceGroup <- factor(flight2016$DistanceGroup, levels = levels(flight$DistanceGroup))
+flight2016$DayOfWeek <- factor(flight2016$DayOfWeek, levels = levels(flight$DayOfWeek))
+flight2016$ArrTimeBlk <- factor(flight2016$ArrTimeBlk, levels = levels(flight$ArrTimeBlk))
+flight2016$DepTimeBlk <- factor(flight2016$DepTimeBlk, levels = levels(flight$DepTimeBlk))
+
+
+flight2016 = na.omit(flight2016)
+```
+
+
+---
+title : "Methodology"
+output : html_output
+
+We identified this problem as a classification problem where we want to predict the possibility of a departure delay given the date time and other arrival parameters. We model our data with Logisitic Regression where we the model will use predictors determined from the previous step and our repsonse variable will be DepDel15 field. We are not going to include any of the departure delay fields in our model
+
+Model 1 : Logistic Regression
+---
+```{r warning=FALSE}
+
+#We will Run logistic regression on the data
+
+
+#Creating Dummy Variables
+flights.dummy = model.matrix(~Carrier +Dest + DistanceGroup , data = flight)
+flights.dummy <- flights.dummy[,-1]
+flights.dummy = data.frame(flights.dummy)
+
+flights.dummy = merge(flights.dummy,flight, by = 0)
+flights.dummy$Row.names = NULL
+flights.dummy$Carrier = NULL
+flights.dummy$Origin =NULL
+flights.dummy$Dest = NULL
+flights.dummy$DistanceGroup = NULL
+
+#Creating Dummy Variables in the 2016 data.
+flights.dummy2016 = model.matrix(~Carrier +Dest + DistanceGroup  , data = flight2016)
+flights.dummy2016 <- flights.dummy2016[,-1]
+flights.dummy2016 = data.frame(flights.dummy2016)
+
+flights.dummy2016 = merge(flights.dummy2016,flight2016, by = 0)
+flights.dummy2016$Row.names = NULL
+flights.dummy2016$Carrier = NULL
+flights.dummy2016$Origin =NULL
+flights.dummy2016$DistanceGroup = NULL
+flights.dummy2016$Dest = NULL
+
+#Split data into two parts for Logistic Regression. For Logistic Regression model, we need to
+set.seed(1)
+n <- nrow(flight)
+shuffled_df <- flights.dummy[sample(n), ]
+train_indices <- 1:round(0.6 * n)
+train <- shuffled_df[train_indices, ]
+test_indices <- (round(0.6 * n) + 1):n
+test <- shuffled_df[test_indices, ]
+```
+
+```{r warning=FALSE}
+#Logistic regression on 2006 Data
+flight.lr = glm(DepDel15 ~ . , data = train, family = "binomial")
+# Discerning the results of the logistic regression.
+predict.lr = predict.glm(flight.lr , newdata  = test, type = "response")
+result.lr = rep(0, nrow(test))
+result.lr[predict.lr>= 0.5] = 1
+table(result.lr, test$DepDel15)
+mean(result.lr == test$DepDel15)
+
+#Predicting on 2016 Data
+
+#na.omit(flights.dummy2016)
+flight.lr = glm(DepDel15 ~ . , data = flights.dummy, family = binomial)
+predict.lr = predict(flight.lr , newdata  = flights.dummy2016, type = "response")
+result.lr = rep(0, nrow(flights.dummy2016))
+result.lr[predict.lr>= 0.5] = 1
+confusionMatrix(result.lr, flights.dummy2016$DepDel15, positive = "1")
+
+#ROC Curve for Logistic regression
+
+prob.lr = data.frame(predict.lr)
+roc.lr = roc(flights.dummy2016$DepDel15, prob.lr$predict.lr)
+plot(roc.lr, print.auc = TRUE)
+```
+
+---
+
+From the above results from logistic regression, the sensitivity is effectively communicated. We require a model that exibhits high accuracy and high specificity. That is the system should be be able to predict the delay correctly and any incorrect prediction can hurt the passengers.
+---
+
+
+
+---
+
+Model 2 - Random Forrest
+
+After predicting using Logistic Regression, we made the following observations:
+
+ * Logisitc Regression showed a high sensitivity and accuracy. We wanted to verify our findings through another model that can show a         higher accuracy and sensitivity.
+ 
+ * The cost of false negative is very high in this case since the passenger can miss the flight and hence we will use Random Forrest to see    if this can be predicted.
+---
+
+```{r warning=FALSE}
+
+
+#Split the data into 2 sets for Random Forest
+set.seed(1)
+n <- nrow(flight)
+shuffled_df <- flight[sample(n), ]
+train_indices <- 1:round(0.6 * n)
+train.rf <- shuffled_df[train_indices, ]
+test_indices <- (round(0.6 * n) + 1):n
+test.rf <- shuffled_df[test_indices, ]
+
+
+# Creating a random forest to test  classify
+flight.rf =  randomForest(as.factor(DepDel15) ~ ., data = train.rf)
+#Discernign a Decision Tree
+varImpPlot(flight.rf)
+varImp(flight.rf)
+predict.rf = predict(flight.rf, newdata = test.rf,  type = "class" )
+confusionMatrix(predict.rf, test.rf$DepDel15)
+
+#Predicting on 20016 Data
+
+flight.rf =  randomForest(DepDel15 ~ ., data = flight) # Training on the entire  2006 data
+predict.rf = predict(flight.rf, newdata = flight2016,  type = "class" )
+confusionMatrix(predict.rf, flight2016$DepDel15, positive = "1")
+
+#ROC Curve
+prob.rf = predict(flight.rf, newdata = flight2016, type = "prob" )
+prob.rf = data.frame(prob.rf)
+roc.rf = roc(flight2016$DepDel15, prob.rf$X1)
+plot(roc.rf, print.auc = TRUE)
+
+```
+
+
+```{r warning=FALSE}
+
+flights.dummy2016 = na.omit(flights.dummy2016)
+flights.dummy = na.omit(flights.dummy)
+#Decision Tree
+flight.tree = tree(as.factor(DepDel15) ~ ., data = train)
+predict.tree = predict(flight.tree, newdata  = test,  type = "class" )
+table(predict.tree, test$DepDel15)
+mean(predict.tree == test$DepDel15)
+
+#Predicting on the 2016 Data
+flight.tree = tree(as.factor(DepDel15) ~ ., data = flights.dummy)
+predict.tree = predict(flight.tree, newdata  = flights.dummy2016,  type = "class" )
+table(predict.tree, flights.dummy2016$DepDel15)
+confusionMatrix(predict.tree, flights.dummy2016$DepDel15 , positive = "1")
+
+#Take the Probability
+prob.tree = predict(flight.tree, newdata  = flights.dummy2016,  class = "prob" )
+prob.tree = data.frame(prob.tree)
+
+#ROC Curve
+roc.dt = roc(flights.dummy2016$DepDel15, prob.tree$X1)
+plot(roc.dt, print.auc = TRUE)
+
+```
+
+
+---
+
+Section 3 - Key Findings and Model Selection
+
+ * With the current data, Logistic model was able to correctly predict significant number of times when the flight was actually delayed. 
+   And, it was also able to classify correctly a good number of cases where, the flight was not delayed (High Specificity)
+ 
+ * Random Forrest model was able to predict with greater accuracy on the unseen 2016 data as compared to the Logistic model. The Random       model performed comparatively better than the logistc one, in classifying the cases where the flights was actually not delayed. It         performed comparitively worse on the logistical model, in indenitfying the cases where the flight is not delayed.
+---
+
+
+---
+
+Q3 : Suppose you are asked to design an analytical component of a personalized flight delay warning system. Can the available data be used      to build such a tool? What aspects of it may be useful? Demonstrate your ideas with examples of analysis of the data focusing on           specific anticipated use cases.  Discuss limitations of the data at hand and evaluate availability and potential utility of an
+     alternative sources of relevant information.
+     
+     Based on the previous results we can see that a simple flight delay warning system can be built using a the above mentioned data. The      Arrival Delay as recorded from the flights Central Recording System (CRS) vs the actual departure time can be very useful in               predicting the delay. 
+     
+     Data Limitations:
+    
+    1. From the flight raw data as provided by the DoT, we can observe that a lot of flights have been delayed due to Weather, Carier             related issues. Some of the highest frequency of delay reasons are due to the Late Aircraft Delay or Carier Delay. By having access        to the forecasted weather conditions and Carier seating capacity, we can better approximate the delay.Below count will demonstrate         the number of flights that were delayed due to these reasons.
+---
+```{r}
+WeatherDepDelay <- nrow(flight[(flight$WeatherDelay > 0) & (flight$DepDel15 == 1), ])
+WeatherDepDelay
+CarrierDepDelay <- nrow(flight[(flight$CarrierDelay > 0) & (flight$DepDel15 == 1), ])
+CarrierDepDelay
+NASDepDelay <- nrow(flight[(flight$NASDelay > 0) & (flight$DepDel15 == 1), ])
+NASDepDelay
+SecurityDepDelay <- nrow(flight[(flight$SecurityDelay > 0) & (flight$DepDel15 == 1), ])
+SecurityDepDelay 
+LateAircraftDepDelay <- nrow(flight[(flight$LateAircraftDelay > 0) & (flight$DepDel15 == 1), ])
+LateAircraftDepDelay
+```
+
+
+
+---
+
+Q4: What has changed at PIT airport since 2006 when it comes to flight delays?
+
+    
+    
+
+
+
+---
+```{r}
+count1 <- table(flight2016$DepDel15, flight2016$Carrier)
+barplot(count1, main="Flight Delays count for Carriers",
+ xlab="Carrier in 2016", col=c("darkblue","red"),
+	legend = rownames(count1))
+
+count1 <- table(flight$DepDel15, flight$Carrier)
+barplot(count1, main="Flight Delays count for Carriers",
+  xlab="Carriers in 2006", col=c("darkblue","red"),
+ 	legend = rownames(count1))
+```
+
+
+
+---
+* The number of cariers causing delays have significantly reduced as compared to 2006.
+* The Flight delays per quarter has increasesed in 2016
+* In 2016, there are more flights that have an arrival delay.
+
+---
